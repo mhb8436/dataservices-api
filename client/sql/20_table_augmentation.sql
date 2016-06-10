@@ -1,3 +1,5 @@
+CREATE TYPE table_augment_metadata as (schema text, tabname text);
+
 --
 -- Public function to augment a table with a new measure column.
 -- This function checks that the user is authenticated and calls to 
@@ -46,20 +48,19 @@ $$ LANGUAGE 'plpgsql' SECURITY DEFINER;
 --
 
 
-CREATE OR REPLACE FUNCTION _OBS_AugmentWithMeasure(username text, input_schema text, dbname text, hostname text, table_name text, column_name text, tag_name text, normalize text default null, timespan text DEFAULT null, geometry_level text DEFAULT null)
+CREATE OR REPLACE FUNCTION _OBS_AugmentWithMeasure(username text, useruuid text, input_schema text, dbname text, hostname text, table_name text, column_name text, tag_name text, normalize text default null, timespan text DEFAULT null, geometry_level text DEFAULT null)
 RETURNS boolean AS $$
     try:
         local_schema = 'fdw_' + username
-
+        foreign_table = None
         # Call to augment server
-        foreign_metadata = plpy.execute("SELECT server, tabname FROM _OBS_AugmentWithMeasureFDW('{0}'::text, '{1}'::text, '{2}'::text, '{3}'::text, '{4}'::text, '{5}'::text, '{6}'::text, '{7}'::text, '{8}'::text, '{9}'::text');".format(username, input_schema, dbname, hostname, table_name, column_name, tag_name, normalize, timespan, geometry_level))
+        foreign_metadata = plpy.execute("SELECT schema, tabname FROM _OBS_AugmentWithMeasureFDW('{0}'::text, '{1}'::text, '{2}'::text, '{3}'::text, '{4}'::text, '{5}'::text, '{6}'::text, '{7}'::text, '{8}'::text, '{9}'::text, '{10}'::text);".format(username, useruuid, input_schema, dbname, hostname, table_name, column_name, tag_name, normalize, timespan, geometry_level))
 
+        plpy.warning('holi -------------------------------------------')
         foreign_schema = foreign_metadata[0]["schema"]
         foreign_table = foreign_metadata[0]["tabname"]
 
         #TODO: Check for errors in _OBS_AugmentWithMeasureFDW
-        if foreign_table is None:
-            return False
 
         plpy.execute("SELECT _connect_augmented_table('{0}'::text, '{1}'::text, '{2}'::text)".format(foreign_schema, foreign_table, local_schema))
 
@@ -88,10 +89,10 @@ RETURNS boolean AS $$
 $$ LANGUAGE plpythonu;
 
 
-CREATE OR REPLACE FUNCTION _OBS_AugmentWithMeasureFDW(username text, input_schema text, dbname text, hostname text, table_name text, column_name text, tag_name text, normalize text, timespan text, geometry_level text)
+CREATE OR REPLACE FUNCTION _OBS_AugmentWithMeasureFDW(username text, useruuid text, input_schema text, dbname text, hostname text, table_name text, column_name text, tag_name text, normalize text, timespan text, geometry_level text)
 RETURNS table_augment_metadata AS $$
     CONNECT _server_conn_str();
-    SELECT server, tabname FROM _OBS_AugmentWithMeasureFDW(username::text, input_schema::text, dbname:: text, hostname::text, table_name::text, column_name::text, tag_name::text, normalize::text, timespan::text, geometry_level::text);
+    SELECT schema, tabname FROM _OBS_AugmentWithMeasureFDW(username::text, useruuid::text, input_schema::text, dbname:: text, hostname::text, table_name::text, column_name::text, tag_name::text, normalize::text, timespan::text, geometry_level::text);
 $$ LANGUAGE plproxy;
 
 --
