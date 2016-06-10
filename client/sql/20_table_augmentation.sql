@@ -99,7 +99,7 @@ $$ LANGUAGE plproxy;
 -- Internal function to connect to a foreign table
 --
 
-CREATE OR REPLACE FUNCTION _connect_augmented_table(foreign_schema text, foreign_table text, local_schema text)
+CREATE OR REPLACE FUNCTION _connect_augmented_table(username text, foreign_schema text, foreign_table text, local_schema text)
 RETURNS boolean AS $$
 DECLARE
   fdw_server text;
@@ -110,18 +110,17 @@ BEGIN
 
   fdw_server := 'fdw_server_' || username;
 
-  SELECT cdb_dataservices_client._augmentation_server_conn_json() INTO connection_str;
+  SELECT _augmentation_server_conn_json() INTO connection_str;
 
   -- Configure FDW to Augmentation Server
   EXECUTE 'SELECT cartodb._CDB_Setup_FDW('''|| fdw_server ||''', $1::json)' USING connection_str ;
 
-  -- Must create schema. CHECK IF NOT NEEDED bc of CDBSetup
   schema_query := 'CREATE SCHEMA IF NOT EXISTS "' || local_schema ||'"';
   EXECUTE schema_query;
 
   -- Import result table
   query_import := 'IMPORT FOREIGN SCHEMA "' || foreign_schema || '" LIMIT TO ('|| foreign_table ||') '
-                || ' FROM SERVER ''' || fdw_server || ''' INTO "' || local_schema || '";';
+                || ' FROM SERVER "' || fdw_server || '" INTO "' || local_schema || '";';
   EXECUTE query_import;
 
   RETURN true;
