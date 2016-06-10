@@ -19,6 +19,7 @@ DECLARE
   grant2_query text;
   return_query text;
   epoch_timestamp text;
+  idx_query text;
   obs_result boolean;
 BEGIN
 
@@ -53,9 +54,10 @@ BEGIN
   SELECT observatory._OBS_AugmentWithMeasureFDW(fdw_schema, table_name, temp_table_name, column_name, tag_name, normalize, timespan, geometry_level) INTO obs_result;
 
   IF obs_result THEN
-    -- TODO: add index on cartodb_id
+    idx_query = 'CREATE UNIQUE INDEX cartodb_id_idx ON "' || fdw_schema || '".' || temp_table_name || ' (cartodb_id)';
     grant_query = 'ALTER TABLE "' || fdw_schema || '".' || temp_table_name || ' OWNER TO fdw_user;';
     grant2_query = 'GRANT USAGE ON SCHEMA "' || fdw_schema || '" TO fdw_user;';
+    EXECUTE idx_query;
     EXECUTE grant_query;
     EXECUTE grant2_query;
   END IF;
