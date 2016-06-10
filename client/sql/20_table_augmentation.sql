@@ -50,7 +50,7 @@ RETURNS boolean AS $$
     try:
         # Call to augment server
         # TODO: Edit signature to call to data_services_server explicitly
-        foreign_metadata = plpy.execute("SELECT server, tabname FROM _OBS_AugmentWithMeasure('{0}'::text, '{1}'::text, '{2}'::text, '{3}'::text, '{4}'::text, '{5}'::text, '{6}'::text, '{7}'::text, '{8}'::text, '{9}'::text');".format(username, input_schema, dbname, hostname, table_name, column_name, tag_name, normalize, timespan, geometry_level))
+        foreign_metadata = plpy.execute("SELECT server, tabname FROM _OBS_AugmentWithMeasureServer('{0}'::text, '{1}'::text, '{2}'::text, '{3}'::text, '{4}'::text, '{5}'::text, '{6}'::text, '{7}'::text, '{8}'::text, '{9}'::text');".format(username, input_schema, dbname, hostname, table_name, column_name, tag_name, normalize, timespan, geometry_level))
 
         foreign_schema = foreign_metadata[0]["schema"]
         foreign_table = foreign_metadata[0]["tabname"]
