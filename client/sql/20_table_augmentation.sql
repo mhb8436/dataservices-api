@@ -88,6 +88,12 @@ RETURNS boolean AS $$
 $$ LANGUAGE plpythonu;
 
 
+CREATE OR REPLACE FUNCTION _OBS_AugmentWithMeasureFDW(username text, input_schema text, dbname text, hostname text, table_name text, column_name text, tag_name text, normalize text, timespan text, geometry_level text)
+RETURNS table_augment_metadata AS $$
+    CONNECT _server_conn_str();
+    SELECT server, tabname FROM _OBS_AugmentWithMeasureFDW(username::text, input_schema::text, dbname:: text, hostname::text, table_name::text, column_name::text, tag_name::text, normalize::text, timespan::text, geometry_level::text);
+$$ LANGUAGE plproxy;
+
 --
 -- Internal function to connect to a foreign table
 --
