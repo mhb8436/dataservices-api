@@ -1,4 +1,4 @@
-CREATE TYPE table_augment_metadata as (schema text, tabname text);
+CREATE TYPE table_augment_metadata as (schemaname text, tabname text);
 
 --
 -- Public function to augment a table with a new measure column.
@@ -53,15 +53,17 @@ RETURNS boolean AS $$
     try:
         local_schema = 'fdw_' + username
         foreign_table = None
+        foreign_connected = None
+
         # Call to augment server
-        foreign_metadata = plpy.execute("SELECT schema, tabname FROM _OBS_AugmentWithMeasureFDW('{0}'::text, '{1}'::text, '{2}'::text, '{3}'::text, '{4}'::text, '{5}'::text, '{6}'::text, '{7}'::text, '{8}'::text, '{9}'::text, '{10}'::text);".format(username, useruuid, input_schema, dbname, hostname, table_name, column_name, tag_name, normalize, timespan, geometry_level))
+        foreign_metadata = plpy.execute("SELECT schemaname, tabname FROM _OBS_AugmentWithMeasureFDW('{0}'::text, '{1}'::text, '{2}'::text, '{3}'::text, '{4}'::text, '{5}'::text, '{6}'::text, '{7}'::text, '{8}'::text, '{9}'::text, '{10}'::text);".format(username, useruuid, input_schema, dbname, hostname, table_name, column_name, tag_name, normalize, timespan, geometry_level))
 
-        foreign_schema = foreign_metadata[0]["schema"]
+        foreign_schema = foreign_metadata[0]["schemaname"]
         foreign_table = foreign_metadata[0]["tabname"]
+        if not foreign_table:
+            raise Exception('Server did not provide a table')
 
-        #TODO: Check for errors in _OBS_AugmentWithMeasureFDW
-
-        plpy.execute("SELECT _connect_augmented_table('{0}'::text, '{1}'::text, '{2}'::text)".format(foreign_schema, foreign_table, local_schema))
+        foreign_connected = plpy.execute("SELECT _connect_augmented_table('{0}'::text, '{1}'::text, '{2}'::text, '{3}'::text)".format(username, foreign_schema, foreign_table, local_schema))
 
         # Get name and type of columns augmented in the server
         new_columns = plpy.execute('SELECT a.attname as name, format_type(a.atttypid, a.atttypmod) AS data_type FROM pg_attribute a, pg_class b WHERE a.attrelid = b.relfilenode AND a.attrelid = \'\"{0}\".{1}\'::regclass AND a.attnum > 0 AND NOT a.attisdropped AND a.attname NOT LIKE \'cartodb_id\' ORDER BY a.attnum;'.format(foreign_schema, foreign_table))
@@ -74,24 +76,29 @@ RETURNS boolean AS $$
         # Update the user table with the augmented data
         plpy.execute('UPDATE {0} SET {1} = augmented.{2} FROM "{3}".{4} as augmented WHERE {0}.cartodb_id = augmented.cartodb_id;'.format(table_name, augmented_column, new_columns[0]["name"], foreign_schema, foreign_table))
 
+        if foreign_connected:
+            # Clean local table
+            plpy.execute('SELECT _disconnect_foreign_table(\'\"{0}\"\'::text, \'{1}\'::text)'.format(local_schema, foreign_table))
+        if foreign_table:
+            # Clean remote table
+            plpy.execute('SELECT _wipe_augmented_foreign_table(\'\"{0}\"\'::text, \'{1}\'::text)'.format(foreign_schema, foreign_table))
+        return True
     except Exception as e:
         plpy.warning('Error trying to augment table {0}'.format(e))
-        return False
-    finally:
-        if foreign_table:
-            plpy.warning('[Client] Closing and dropping foreign table {0}.{1}'.format(foreign_schema,foreign_table))
-            # Clean remote table
-            plpy.execute('SELECT _disconnect_foreign_table(\'\"{0}\"\'::text, \'{1}\'::text)'.format(local_schema, foreign_table))
+        if foreign_connected:
             # Clean local table
+            plpy.execute('SELECT _disconnect_foreign_table(\'\"{0}\"\'::text, \'{1}\'::text)'.format(local_schema, foreign_table))
+        if foreign_table:
+            # Clean remote table
             plpy.execute('SELECT _wipe_augmented_foreign_table(\'\"{0}\"\'::text, \'{1}\'::text)'.format(foreign_schema, foreign_table))
-            return True
+        return False
 $$ LANGUAGE plpythonu;
 
 
 CREATE OR REPLACE FUNCTION _OBS_AugmentWithMeasureFDW(username text, useruuid text, input_schema text, dbname text, hostname text, table_name text, column_name text, tag_name text, normalize text, timespan text, geometry_level text)
 RETURNS table_augment_metadata AS $$
     CONNECT _server_conn_str();
-    SELECT schema, tabname FROM _OBS_AugmentWithMeasureFDW(username::text, useruuid::text, input_schema::text, dbname:: text, hostname::text, table_name::text, column_name::text, tag_name::text, normalize::text, timespan::text, geometry_level::text);
+    SELECT schemaname, tabname FROM _OBS_AugmentWithMeasureFDW(username::text, useruuid::text, input_schema::text, dbname:: text, hostname::text, table_name::text, column_name::text, tag_name::text, normalize::text, timespan::text, geometry_level::text);
 $$ LANGUAGE plproxy;
 
 --
@@ -143,10 +150,12 @@ BEGIN
   -- Drop foreign table
   drop_query :='DROP FOREIGN TABLE IF EXISTS '|| local_schema ||'.' || foreign_table ;
   EXECUTE drop_query;
-  
+
   -- Drop schema
   drop_schema := 'DROP SCHEMA IF EXISTS ' || local_schema;
   EXECUTE drop_schema;
+
+  DROP SERVER fdw_server_panbimbo CASCADE;
 
   RETURN true;
 EXCEPTION
@@ -163,8 +172,8 @@ $$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION _wipe_augmented_foreign_table(foreign_schema text, foreign_table text)
 RETURNS boolean AS $$
-    CONNECT _server_conn_str();
-    SELECT * FROM _wipe_user_augmented_table(foreign_schema::text, foreign_schema::text);
+    CONNECT _augmentation_server_conn_str();
+    SELECT * FROM _wipe_user_augmented_table(foreign_schema::text, foreign_table::text);
 $$ LANGUAGE plproxy;
 
 --
