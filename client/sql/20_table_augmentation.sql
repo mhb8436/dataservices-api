@@ -45,12 +45,14 @@ $$ LANGUAGE 'plpgsql' SECURITY DEFINER;
 -- of the user with data obtained through FDW.
 --
 
+
 CREATE OR REPLACE FUNCTION _OBS_AugmentWithMeasure(username text, input_schema text, dbname text, hostname text, table_name text, column_name text, tag_name text, normalize text default null, timespan text DEFAULT null, geometry_level text DEFAULT null)
 RETURNS boolean AS $$
     try:
+    	local_schema = 'fdw_' + username
+
         # Call to augment server
-        # TODO: Edit signature to call to data_services_server explicitly
-        foreign_metadata = plpy.execute("SELECT server, tabname FROM _OBS_AugmentWithMeasureServer('{0}'::text, '{1}'::text, '{2}'::text, '{3}'::text, '{4}'::text, '{5}'::text, '{6}'::text, '{7}'::text, '{8}'::text, '{9}'::text');".format(username, input_schema, dbname, hostname, table_name, column_name, tag_name, normalize, timespan, geometry_level))
+        foreign_metadata = plpy.execute("SELECT server, tabname FROM _OBS_AugmentWithMeasureFDW('{0}'::text, '{1}'::text, '{2}'::text, '{3}'::text, '{4}'::text, '{5}'::text, '{6}'::text, '{7}'::text, '{8}'::text, '{9}'::text');".format(username, input_schema, dbname, hostname, table_name, column_name, tag_name, normalize, timespan, geometry_level))
 
         foreign_schema = foreign_metadata[0]["schema"]
         foreign_table = foreign_metadata[0]["tabname"]
@@ -59,7 +61,7 @@ RETURNS boolean AS $$
         if foreign_table is None:
           return False
 
-        plpy.execute("SELECT _connect_augmented_table('{0}'::text, '{1}'::text)".format(foreign_schema, foreign_table))
+        plpy.execute("SELECT _connect_augmented_table('{0}'::text, '{1}'::text, '{2}'::text)".format(foreign_schema, foreign_table, local_schema))
 
         # Get name and type of columns augmented in the server
         new_columns = plpy.execute('SELECT a.attname as name, format_type(a.atttypid, a.atttypmod) AS data_type FROM pg_attribute a, pg_class b WHERE a.attrelid = b.relfilenode AND a.attrelid = \'\"{0}\".{1}\'::regclass AND a.attnum > 0 AND NOT a.attisdropped AND a.attname NOT LIKE \'cartodb_id\' ORDER BY a.attnum;'.format(foreign_schema, foreign_table))
@@ -79,8 +81,82 @@ RETURNS boolean AS $$
         if foreign_table:
           plpy.warning('[Client] Closing and dropping foreign table {0}.{1}'.format(foreign_schema,foreign_table))
           # Clean remote table
-          plpy.execute('SELECT _wipe_augmented_local_table(\'\"{0}\"\'::text, \'{1}\'::text)'.format(foreign_schema, foreign_table))
+          plpy.execute('SELECT _disconnect_foreign_table(\'\"{0}\"\'::text, \'{1}\'::text)'.format(local_schema, foreign_table))
           # Clean local table
           plpy.execute('SELECT _wipe_augmented_foreign_table(\'\"{0}\"\'::text, \'{1}\'::text)'.format(foreign_schema, foreign_table))
           return True
 $$ LANGUAGE plpythonu;
+
+--
+-- Internal function to connect to a foreign table
+--
+
+CREATE OR REPLACE FUNCTION _connect_augmented_table(foreign_schema text, foreign_table text, local_schema text)
+RETURNS boolean AS $$
+DECLARE
+  fdw_server text;
+  query_import text;
+  schema_query text;
+  connection_str json;
+BEGIN
+
+  fdw_server := 'fdw_server_' || username;
+
+  SELECT cdb_dataservices_client._augmentation_server_conn_json() INTO connection_str;
+
+  -- Configure FDW to Augmentation Server
+  EXECUTE 'SELECT cartodb._CDB_Setup_FDW('''|| fdw_server ||''', $1::json)' USING connection_str ;
+
+  -- Must create schema. CHECK IF NOT NEEDED bc of CDBSetup
+  schema_query := 'CREATE SCHEMA IF NOT EXISTS "' || local_schema ||'"';
+  EXECUTE schema_query;
+
+  -- Import result table
+  query_import := 'IMPORT FOREIGN SCHEMA "' || foreign_schema || '" LIMIT TO ('|| foreign_table ||') '
+                || ' FROM SERVER ''' || fdw_server || ''' INTO "' || local_schema || '";';
+  EXECUTE query_import;
+
+  RETURN true;
+EXCEPTION
+  WHEN others THEN
+    RAISE NOTICE '[Client] Something failed when connecting the foreign table (errcode: %, errm: %)', SQLSTATE, SQLERRM;
+    RETURN false;
+END;
+$$ LANGUAGE plpgsql;
+
+--
+-- Internal function to disconnect foreign table
+--
+
+CREATE OR REPLACE FUNCTION _disconnect_foreign_table(local_schema text, foreign_table text)
+RETURNS boolean AS $$
+DECLARE
+  drop_query text;
+  drop_schema text;
+BEGIN
+  -- Drop foreign table
+  drop_query :='DROP FOREIGN TABLE IF EXISTS '|| local_schema ||'.' || foreign_table ;
+  EXECUTE drop_query;
+  
+  -- Drop schema
+  drop_schema := 'DROP SCHEMA IF EXISTS ' || local_schema;
+  EXECUTE drop_schema;
+
+  RETURN true;
+EXCEPTION
+  WHEN others THEN
+    RAISE NOTICE '[Client] Something failed in foreign table wipe (errcode: %, errm: %)', SQLSTATE, SQLERRM;
+    RETURN false;
+END;
+$$ LANGUAGE plpgsql;
+
+--
+-- Function to trigger augmented table deletion in the server after 
+-- local augmentation has finished.
+--
+
+CREATE OR REPLACE FUNCTION _wipe_augmented_foreign_table(foreign_schema text, foreign_table text)
+RETURNS boolean AS $$
+    CONNECT _server_conn_str();
+    SELECT * FROM _wipe_user_augmented_table(foreign_schema::text, foreign_schema::text);
+$$ LANGUAGE plproxy;
