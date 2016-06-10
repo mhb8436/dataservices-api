@@ -114,8 +114,6 @@ DECLARE
 BEGIN
 
   -- Create temp table with data results
-  -- If the table is temporary, it can be in a specified schema
-  -- ERROR:  cannot create temporary relation in non-temporary schema
   data_query := 'CREATE TABLE '
         || '"' || aug_schema || '".' || aug_table_name
         || ' AS (WITH _areas AS(SELECT ST_Area(a.the_geom::geography)'
