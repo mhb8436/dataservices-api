@@ -41,9 +41,6 @@ BEGIN
     || dbname ||'", "host":"' || host ||'", "port":"5432"}, "users":{"public"'
     || ':{"user":"' || useruuid ||'", "password":""} } }';
 
-  RAISE NOTICE 'connection string: %', connection_str;
-  RAISE NOTICE '[DS Server] SETUPPPP';
-
   -- Configure FDW
   EXECUTE 'SELECT cartodb._CDB_Setup_FDW(''' || fdw_server || ''', $2::json)' USING fdw_server, connection_str ;
 
@@ -56,9 +53,6 @@ BEGIN
                 || ') FROM SERVER "' || fdw_server || '" INTO "'
                 || fdw_schema
                 || '";';
-
-  RAISE NOTICE '[DS Server] IMPORTTT';
-
   EXECUTE query_import;
 
   -- Call to Observatory function that will generate a table with a given name
