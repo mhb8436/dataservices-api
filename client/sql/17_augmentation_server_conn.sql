@@ -1,3 +1,9 @@
+--
+-- Augmentation server connection config
+--
+-- The purpose of this function is provide to the FDW setup function a JSON with
+-- the connection and user mapping details to connect with the server.
+
 CREATE OR REPLACE FUNCTION cdb_dataservices_client._augmentation_server_conn_json()
 RETURNS json AS $$
 DECLARE
