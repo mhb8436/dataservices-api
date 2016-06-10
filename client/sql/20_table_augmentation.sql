@@ -160,3 +160,29 @@ RETURNS boolean AS $$
     CONNECT _server_conn_str();
     SELECT * FROM _wipe_user_augmented_table(foreign_schema::text, foreign_schema::text);
 $$ LANGUAGE plproxy;
+
+--
+-- Internal function that alters the user table to add a new column
+--
+
+CREATE OR REPLACE FUNCTION _add_augmented_column(table_name text, column_name text, data_type text)
+RETURNS text AS $$
+DECLARE
+  alter_str text;
+  new_column_name text;
+  epoch_timestamp text;
+BEGIN
+  SELECT extract(epoch from now() at time zone 'utc')::int INTO epoch_timestamp;
+  new_column_name := column_name || '_aug_' || epoch_timestamp;
+
+  -- Add column to table
+  alter_str := 'ALTER TABLE ' || table_name || ' ADD COLUMN ' || new_column_name || ' ' || data_type;
+  EXECUTE alter_str;
+
+  RETURN new_column_name;
+EXCEPTION
+  WHEN others THEN
+    RAISE NOTICE '[Client] The augmented column could not be included in your table. (errcode: %, errm: %)', SQLSTATE, SQLERRM;
+    RETURN null;
+END;
+$$ LANGUAGE plpgsql;
