@@ -44,7 +44,7 @@ BEGIN
   -- Configure FDW
   EXECUTE 'SELECT cartodb._CDB_Setup_FDW(''' || fdw_server || ''', $2::json)' USING fdw_server, connection_str ;
 
-  schema_q := 'CREATE SCHEMA ' || fdw_schema;
+  schema_q := 'CREATE SCHEMA IF NOT EXISTS ' || fdw_schema;
   EXECUTE schema_q;
 
   -- Import target table
