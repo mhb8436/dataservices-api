@@ -49,7 +49,7 @@ $$ LANGUAGE 'plpgsql' SECURITY DEFINER;
 CREATE OR REPLACE FUNCTION _OBS_AugmentWithMeasure(username text, input_schema text, dbname text, hostname text, table_name text, column_name text, tag_name text, normalize text default null, timespan text DEFAULT null, geometry_level text DEFAULT null)
 RETURNS boolean AS $$
     try:
-    	local_schema = 'fdw_' + username
+        local_schema = 'fdw_' + username
 
         # Call to augment server
         foreign_metadata = plpy.execute("SELECT server, tabname FROM _OBS_AugmentWithMeasureFDW('{0}'::text, '{1}'::text, '{2}'::text, '{3}'::text, '{4}'::text, '{5}'::text, '{6}'::text, '{7}'::text, '{8}'::text, '{9}'::text');".format(username, input_schema, dbname, hostname, table_name, column_name, tag_name, normalize, timespan, geometry_level))
@@ -59,7 +59,7 @@ RETURNS boolean AS $$
 
         #TODO: Check for errors in _OBS_AugmentWithMeasureFDW
         if foreign_table is None:
-          return False
+            return False
 
         plpy.execute("SELECT _connect_augmented_table('{0}'::text, '{1}'::text, '{2}'::text)".format(foreign_schema, foreign_table, local_schema))
 
@@ -79,13 +79,14 @@ RETURNS boolean AS $$
         return False
     finally:
         if foreign_table:
-          plpy.warning('[Client] Closing and dropping foreign table {0}.{1}'.format(foreign_schema,foreign_table))
-          # Clean remote table
-          plpy.execute('SELECT _disconnect_foreign_table(\'\"{0}\"\'::text, \'{1}\'::text)'.format(local_schema, foreign_table))
-          # Clean local table
-          plpy.execute('SELECT _wipe_augmented_foreign_table(\'\"{0}\"\'::text, \'{1}\'::text)'.format(foreign_schema, foreign_table))
-          return True
+            plpy.warning('[Client] Closing and dropping foreign table {0}.{1}'.format(foreign_schema,foreign_table))
+            # Clean remote table
+            plpy.execute('SELECT _disconnect_foreign_table(\'\"{0}\"\'::text, \'{1}\'::text)'.format(local_schema, foreign_table))
+            # Clean local table
+            plpy.execute('SELECT _wipe_augmented_foreign_table(\'\"{0}\"\'::text, \'{1}\'::text)'.format(foreign_schema, foreign_table))
+            return True
 $$ LANGUAGE plpythonu;
+
 
 --
 -- Internal function to connect to a foreign table
