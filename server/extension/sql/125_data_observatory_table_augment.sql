@@ -4,6 +4,9 @@
 
 CREATE TYPE table_augment_metadata as (schemaname text, tabname text);
 
+
+CREATE TABLE augmented_datasets (table_schema text, table_name text, created_at timestamp, deletion_marked_at timestamp, delete boolean);
+
 CREATE OR REPLACE FUNCTION _OBS_AugmentWithMeasureFDW(username text, useruuid text, input_schema text, dbname text, host text, table_name text, column_name text, tag_name text, normalize text default null, timespan text DEFAULT null, geometry_level text DEFAULT null)
 RETURNS table_augment_metadata
 AS $$
@@ -17,14 +20,14 @@ DECLARE
   schema_q text;
   grant_query text;
   grant2_query text;
+  idx_query text;
   return_query text;
   epoch_timestamp text;
-  idx_query text;
   obs_result boolean;
 BEGIN
 
   SELECT extract(epoch from now() at time zone 'utc')::int INTO epoch_timestamp;
-  -- Temporal naming to avoid collisions
+
   temp_table_name := 'aug_' || table_name || '_tmp_' || epoch_timestamp;
   fdw_server := 'fdw_server' || username;
   fdw_schema:= 'fdw_' || username;
@@ -40,12 +43,11 @@ BEGIN
   EXECUTE schema_q;
 
   -- Import target table
-  query_import := 'IMPORT FOREIGN SCHEMA public LIMIT TO ('
+  query_import := 'IMPORT FOREIGN SCHEMA "'|| input_schema ||'" LIMIT TO ('
                 || table_name
                 || ') FROM SERVER "' || fdw_server || '" INTO "'
                 || fdw_schema
                 || '";';
-
   EXECUTE query_import;
 
   -- Call to Observatory function that will generate a table with a given name
@@ -54,6 +56,8 @@ BEGIN
   SELECT observatory._OBS_AugmentWithMeasureFDW(fdw_schema, table_name, temp_table_name, column_name, tag_name, normalize, timespan, geometry_level) INTO obs_result;
 
   IF obs_result THEN
+    INSERT INTO augmented_datasets (table_schema, table_name, created_at) VALUES (fdw_schema, temp_table_name, now());
+
     idx_query = 'CREATE UNIQUE INDEX cartodb_id_idx ON "' || fdw_schema || '".' || temp_table_name || ' (cartodb_id)';
     grant_query = 'ALTER TABLE "' || fdw_schema || '".' || temp_table_name || ' OWNER TO fdw_user;';
     grant2_query = 'GRANT USAGE ON SCHEMA "' || fdw_schema || '" TO fdw_user;';
@@ -84,61 +88,15 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 
 
-CREATE OR REPLACE FUNCTION _wipe_user_augmented_table(fdw_schema text, table_name text)
+CREATE OR REPLACE FUNCTION _mark_user_augmented_table_deletion(fdw_schema text, tablename text)
 RETURNS boolean AS $$
-DECLARE
-  drop_query text;
-  users text;
 BEGIN
-  SELECT session_user INTO users;
-  drop_query := 'DROP TABLE IF EXISTS ' || fdw_schema || '.' || table_name;
-  RAISE NOTICE 'USER: % [DS Server] %', users, drop_query;
-  EXECUTE drop_query;
+  UPDATE augmented_datasets SET deletion_marked_at = now(), delete = true WHERE table_name = $2;
   RETURN true;
 EXCEPTION
   WHEN others THEN
+    RAISE NOTICE '(errcode: %, errm: %)', SQLSTATE, SQLERRM;
     RETURN false;
-END;
-$$ LANGUAGE plpgsql;
-
-
-
---
--- Mock for observatory function.
---
-CREATE OR REPLACE FUNCTION observatory._OBS_AugmentWithMeasureFDW(aug_schema text, input_table_name text, aug_table_name text, column_name text, tag_name text, normalize text default null, timespan text DEFAULT null, geometry_level text DEFAULT null)
-RETURNS boolean
-AS $$
-DECLARE
-  data_query text;
-BEGIN
-
-  -- Create temp table with data results
-  data_query := 'CREATE TABLE '
-        || '"' || aug_schema || '".' || aug_table_name
-        || ' AS (WITH _areas AS(SELECT ST_Area(a.the_geom::geography)'
-        || '/ (1000 * 1000) as fraction, a.geoid, b.cartodb_id FROM '
-        || 'observatory.obs_85328201013baa14e8e8a4a57a01e6f6fbc5f9b1 as a, "'
-        || aug_schema || '".' || input_table_name || ' AS b '
-        || 'WHERE b.the_geom && a.the_geom ), values AS (SELECT geoid, '
-        || tag_name
-        || ' FROM observatory.obs_3e7cc9cfd403b912c57b42d5f9195af9ce2f3cdb ) '
-        || 'SELECT sum('
-        || tag_name
-        || '/fraction) as '
-        || tag_name
-        || ', cartodb_id FROM _areas, values '
-        || 'WHERE values.geoid = _areas.geoid GROUP BY cartodb_id);';
-  EXECUTE data_query;
-
-  RETURN true;
-
-EXCEPTION
-  WHEN others THEN
-    RAISE NOTICE '[OBS Server] Something failed (errcode: %, errm: %)', SQLSTATE, SQLERRM;
-    RAISE NOTICE '[OBS Server] Dropping temp table';
-    EXECUTE 'DROP TABLE IF EXISTS "' || aug_schema || '".' || aug_table_name;
-    RETURN false;
-
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
