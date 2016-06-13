@@ -27,9 +27,9 @@ BEGIN
   END IF;
 
   IF orgname IS NULL OR orgname = '' OR orgname = '""' THEN
-    input_schema := username;
-  ELSE
     input_schema := 'public';
+  ELSE
+    input_schema := username;
   END IF;
 
   SELECT current_database() INTO dbname;
