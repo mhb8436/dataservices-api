@@ -54,6 +54,7 @@ RETURNS boolean AS $$
         local_schema = 'fdw_' + username
         foreign_table = None
         foreign_connected = None
+        fdw_server = 'fdw_server_' + username
 
         # Call to augment server
         foreign_metadata = plpy.execute("SELECT schemaname, tabname FROM _OBS_AugmentWithMeasureFDW('{0}'::text, '{1}'::text, '{2}'::text, '{3}'::text, '{4}'::text, '{5}'::text, '{6}'::text, '{7}'::text, '{8}'::text, '{9}'::text, '{10}'::text);".format(username, useruuid, input_schema, dbname, hostname, table_name, column_name, tag_name, normalize, timespan, geometry_level))
@@ -78,7 +79,7 @@ RETURNS boolean AS $$
 
         if foreign_connected:
             # Clean local table
-            plpy.execute('SELECT _disconnect_foreign_table(\'\"{0}\"\'::text, \'{1}\'::text)'.format(local_schema, foreign_table))
+            plpy.execute('SELECT _disconnect_foreign_table(\'\"{0}\"\'::text, \'{1}\'::text, \'{2}\'::text)'.format(local_schema, foreign_table, fdw_server))
         if foreign_table:
             # Clean remote table
             plpy.execute('SELECT _wipe_augmented_foreign_table(\'\"{0}\"\'::text, \'{1}\'::text)'.format(foreign_schema, foreign_table))
@@ -87,7 +88,7 @@ RETURNS boolean AS $$
         plpy.warning('Error trying to augment table {0}'.format(e))
         if foreign_connected:
             # Clean local table
-            plpy.execute('SELECT _disconnect_foreign_table(\'\"{0}\"\'::text, \'{1}\'::text)'.format(local_schema, foreign_table))
+            plpy.execute('SELECT _disconnect_foreign_table(\'\"{0}\"\'::text, \'{1}\'::text, \'{2}\'::text)'.format(local_schema, foreign_table, fdw_server))
         if foreign_table:
             # Clean remote table
             plpy.execute('SELECT _wipe_augmented_foreign_table(\'\"{0}\"\'::text, \'{1}\'::text)'.format(foreign_schema, foreign_table))
@@ -141,11 +142,12 @@ $$ LANGUAGE plpgsql;
 -- Internal function to disconnect foreign table
 --
 
-CREATE OR REPLACE FUNCTION _disconnect_foreign_table(local_schema text, foreign_table text)
+CREATE OR REPLACE FUNCTION _disconnect_foreign_table(local_schema text, foreign_table text, server_name text)
 RETURNS boolean AS $$
 DECLARE
   drop_query text;
   drop_schema text;
+  drop_server text;
 BEGIN
   -- Drop foreign table
   drop_query :='DROP FOREIGN TABLE IF EXISTS '|| local_schema ||'.' || foreign_table ;
@@ -155,7 +157,8 @@ BEGIN
   drop_schema := 'DROP SCHEMA IF EXISTS ' || local_schema;
   EXECUTE drop_schema;
 
-  DROP SERVER fdw_server_panbimbo CASCADE;
+  drop_server := 'DROP SERVER ' || server_name || ' CASCADE;';
+  EXECUTE drop_server;
 
   RETURN true;
 EXCEPTION
