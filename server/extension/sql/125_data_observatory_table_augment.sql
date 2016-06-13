@@ -5,7 +5,7 @@
 CREATE TYPE table_augment_metadata as (schemaname text, tabname text);
 
 
-CREATE TABLE augmented_datasets (table_schema text, table_name text, created_at timestamp, deletion_marked_at timestamp, delete boolean);
+CREATE TABLE augmented_datasets (table_schema text, table_name text, created_at timestamp, can_be_deleted boolean);
 
 CREATE OR REPLACE FUNCTION _OBS_AugmentWithMeasureFDW(username text, useruuid text, input_schema text, dbname text, host text, table_name text, column_name text, tag_name text, normalize text default null, timespan text DEFAULT null, geometry_level text DEFAULT null)
 RETURNS table_augment_metadata
@@ -91,7 +91,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 CREATE OR REPLACE FUNCTION _mark_user_augmented_table_deletion(fdw_schema text, tablename text)
 RETURNS boolean AS $$
 BEGIN
-  UPDATE augmented_datasets SET deletion_marked_at = now(), delete = true WHERE table_name = $2;
+  UPDATE augmented_datasets SET can_be_deleted = true WHERE table_name = $2;
   RETURN true;
 EXCEPTION
   WHEN others THEN
