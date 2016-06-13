@@ -82,7 +82,7 @@ RETURNS boolean AS $$
             plpy.execute('SELECT _disconnect_foreign_table(\'\"{0}\"\'::text, \'{1}\'::text, \'{2}\'::text)'.format(local_schema, foreign_table, fdw_server))
         if foreign_table:
             # Clean remote table
-            plpy.execute('SELECT _wipe_augmented_foreign_table(\'\"{0}\"\'::text, \'{1}\'::text)'.format(foreign_schema, foreign_table))
+            plpy.execute('SELECT _mark_augmented_foreign_table_deletion(\'\"{0}\"\'::text, \'{1}\'::text)'.format(foreign_schema, foreign_table))
         return True
     except Exception as e:
         plpy.warning('Error trying to augment table {0}'.format(e))
@@ -91,7 +91,7 @@ RETURNS boolean AS $$
             plpy.execute('SELECT _disconnect_foreign_table(\'\"{0}\"\'::text, \'{1}\'::text, \'{2}\'::text)'.format(local_schema, foreign_table, fdw_server))
         if foreign_table:
             # Clean remote table
-            plpy.execute('SELECT _wipe_augmented_foreign_table(\'\"{0}\"\'::text, \'{1}\'::text)'.format(foreign_schema, foreign_table))
+            plpy.execute('SELECT _mark_augmented_foreign_table_deletion(\'\"{0}\"\'::text, \'{1}\'::text)'.format(foreign_schema, foreign_table))
         return False
 $$ LANGUAGE plpythonu;
 
@@ -173,10 +173,10 @@ $$ LANGUAGE plpgsql;
 -- local augmentation has finished.
 --
 
-CREATE OR REPLACE FUNCTION _wipe_augmented_foreign_table(foreign_schema text, foreign_table text)
+CREATE OR REPLACE FUNCTION _mark_augmented_foreign_table_deletion(foreign_schema text, foreign_table text)
 RETURNS boolean AS $$
     CONNECT _augmentation_server_conn_str();
-    SELECT * FROM _wipe_user_augmented_table(foreign_schema::text, foreign_table::text);
+    SELECT * FROM _mark_user_augmented_table_deletion(foreign_schema::text, foreign_table::text);
 $$ LANGUAGE plproxy;
 
 --
