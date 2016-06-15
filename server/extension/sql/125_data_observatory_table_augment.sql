@@ -59,6 +59,7 @@ DECLARE
   colnames text[];
   coltypes text[];
 BEGIN
+  -- Simple mock, there should be real logic in here.
   SELECT array_append(colnames, $1::json->>'tag_name') INTO colnames;
   SELECT array_append(coltypes, 'double precision'::text) INTO coltypes;
 
@@ -76,7 +77,7 @@ DECLARE
   rec RECORD;
 BEGIN
     tag_name := params->'tag_name';
-
+    -- Simple mock, there should be real logic in here.
     data_query := '(WITH _areas AS(SELECT ST_Area(a.the_geom::geography)'
         || '/ (1000 * 1000) as fraction, a.geoid, b.cartodb_id FROM '
         || 'observatory.obs_85328201013baa14e8e8a4a57a01e6f6fbc5f9b1 as a, '
