@@ -1,102 +1,104 @@
 --
 -- Temporary server functions which should live in OBS.
 --
+CREATE TYPE table_augment_data as (schemaname text, tabname text, servername text, colnames text[], coltypes text[]);
 
-CREATE TYPE table_augment_metadata as (schemaname text, tabname text);
 
-
-CREATE TABLE augmented_datasets (table_schema text, table_name text, created_at timestamp, can_be_deleted boolean);
-
-CREATE OR REPLACE FUNCTION _OBS_AugmentWithMeasureFDW(username text, useruuid text, input_schema text, dbname text, host text, table_name text, column_name text, tag_name text, normalize text default null, timespan text DEFAULT null, geometry_level text DEFAULT null)
-RETURNS table_augment_metadata
+CREATE OR REPLACE FUNCTION _OBS_AugmentMeasureServer2(username text, useruuid text, input_schema text, dbname text, host text, table_name text, column_name text, tag_name text, normalize text default null, timespan text DEFAULT null, geometry_level text DEFAULT null)
+RETURNS table_augment_data
 AS $$
 DECLARE
-  temp_table_name text;
   fdw_server text;
-  fdw_schema text;
-  qualified_temp_table text;
+  fdw_import_schema text;
   connection_str json;
-  query_import text;
-  schema_q text;
-  grant_query text;
-  grant2_query text;
-  idx_query text;
-  return_query text;
+  import_foreign_schema_q text;
   epoch_timestamp text;
-  obs_result boolean;
+  grant_local_table_q text;
+  grant_local_schema_q text;
 BEGIN
 
   SELECT extract(epoch from now() at time zone 'utc')::int INTO epoch_timestamp;
+  fdw_server := 'fdw_server_' || username || '_' || epoch_timestamp;
+  fdw_import_schema:= fdw_server;
 
-  temp_table_name := 'aug_' || table_name || '_tmp_' || epoch_timestamp;
-  fdw_server := 'fdw_server' || username;
-  fdw_schema:= 'fdw_' || username;
-
+  -- Build connection string to import table from client
   connection_str := '{"server":{"extensions":"postgis", "dbname":"'
     || dbname ||'", "host":"' || host ||'", "port":"5432"}, "users":{"public"'
     || ':{"user":"' || useruuid ||'", "password":""} } }';
 
-  -- Configure FDW
+  -- Configure FDW for the client
   EXECUTE 'SELECT cartodb._CDB_Setup_FDW(''' || fdw_server || ''', $2::json)' USING fdw_server, connection_str ;
 
-  schema_q := 'CREATE SCHEMA IF NOT EXISTS ' || fdw_schema;
-  EXECUTE schema_q;
+  -- Temporary schema created for each user import to avoid table name collisions
+  EXECUTE 'CREATE SCHEMA IF NOT EXISTS ' || fdw_import_schema;
 
   -- Import target table
-  query_import := 'IMPORT FOREIGN SCHEMA "'|| input_schema ||'" LIMIT TO ('
-                || table_name
-                || ') FROM SERVER "' || fdw_server || '" INTO "'
-                || fdw_schema
-                || '";';
-  EXECUTE query_import;
+  import_foreign_schema_q := 'IMPORT FOREIGN SCHEMA "'|| input_schema ||'" LIMIT TO ('
+                || table_name || ') FROM SERVER "' || fdw_server || '" INTO '
+                || fdw_import_schema || ';';
+  EXECUTE import_foreign_schema_q;
 
-  -- Call to Observatory function that will generate a table with a given name
-  RAISE NOTICE '[DS Server] Augmenting data in the Observatory';
+  grant_local_table_q = 'GRANT SELECT ON "' || fdw_import_schema || '".' || table_name || ' TO fdw_user;';
+  grant_local_schema_q = 'GRANT USAGE ON SCHEMA "' || fdw_import_schema || '" TO fdw_user;';
+  EXECUTE grant_local_table_q;
+  EXECUTE grant_local_schema_q;
 
-  SELECT observatory._OBS_AugmentWithMeasureFDW(fdw_schema, table_name, temp_table_name, column_name, tag_name, normalize, timespan, geometry_level) INTO obs_result;
-
-  IF obs_result THEN
-    INSERT INTO augmented_datasets (table_schema, table_name, created_at) VALUES (fdw_schema, temp_table_name, now());
-
-    idx_query = 'CREATE UNIQUE INDEX cartodb_id_idx ON "' || fdw_schema || '".' || temp_table_name || ' (cartodb_id)';
-    grant_query = 'ALTER TABLE "' || fdw_schema || '".' || temp_table_name || ' OWNER TO fdw_user;';
-    grant2_query = 'GRANT USAGE ON SCHEMA "' || fdw_schema || '" TO fdw_user;';
-    EXECUTE idx_query;
-    EXECUTE grant_query;
-    EXECUTE grant2_query;
-  END IF;
-
-  RAISE NOTICE '[DS Server] OBS result: %', obs_result;
-
-  -- Disconnect user table
-  EXECUTE 'DROP FOREIGN TABLE IF EXISTS "' || fdw_schema || '".' || table_name;
-  -- Return server and table information
-  IF obs_result THEN
-    RETURN (fdw_schema, temp_table_name);
-  ELSE
-    RETURN (''::text, ''::text);
-  END IF;
+  RETURN (fdw_import_schema::text, table_name::text, fdw_server::text, Array['total_pop']::text[],Array['double precision']::text[]);
 
 EXCEPTION
   WHEN others THEN
     RAISE NOTICE '[DS Server] Something failed (errcode: %, errm: %)', SQLSTATE, SQLERRM;
-    EXECUTE 'DROP FOREIGN TABLE IF EXISTS "' || fdw_schema || '".' || table_name;
-    RETURN (''::text, ''::text);
-
+    -- Disconnect user imported table. Delete schema and FDW server.
+    EXECUTE 'DROP FOREIGN TABLE IF EXISTS ' || fdw_import_schema || '.' || table_name;
+    EXECUTE 'DROP SCHEMA IF EXISTS ' || fdw_import_schema || ' CASCADE';
+    EXECUTE 'DROP SERVER ' || fdw_server || ' CASCADE;';
+    RETURN (null, null, null, null, null);
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 
-
-CREATE OR REPLACE FUNCTION _mark_user_augmented_table_deletion(fdw_schema text, tablename text)
-RETURNS boolean AS $$
+CREATE OR REPLACE FUNCTION _OBS_AugmentMeasureServer2Results(table_schema text, table_name text, tag_name text, normalize text default null, timespan text DEFAULT null, geometry_level text DEFAULT null)
+RETURNS SETOF record
+AS $$
+DECLARE
+  data_query text;
+  rec RECORD;
 BEGIN
-  UPDATE augmented_datasets SET can_be_deleted = true WHERE table_name = $2;
-  RETURN true;
-EXCEPTION
-  WHEN others THEN
-    RAISE NOTICE '(errcode: %, errm: %)', SQLSTATE, SQLERRM;
-    RETURN false;
+
+    data_query := '(WITH _areas AS(SELECT ST_Area(a.the_geom::geography)'
+        || '/ (1000 * 1000) as fraction, a.geoid, b.cartodb_id FROM '
+        || 'observatory.obs_85328201013baa14e8e8a4a57a01e6f6fbc5f9b1 as a, '
+        || table_schema || '.' || table_name || ' AS b '
+        || 'WHERE b.the_geom && a.the_geom ), values AS (SELECT geoid, '
+        || tag_name
+        || ' FROM observatory.obs_3e7cc9cfd403b912c57b42d5f9195af9ce2f3cdb ) '
+        || 'SELECT sum('
+        || tag_name
+        || '/fraction)::numeric as '
+        || tag_name
+        || ', cartodb_id::int FROM _areas, values '
+        || 'WHERE values.geoid = _areas.geoid GROUP BY cartodb_id);';
+
+    FOR rec IN EXECUTE data_query
+    LOOP
+        RETURN NEXT rec;
+    END LOOP;
+    RETURN;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+
+CREATE OR REPLACE FUNCTION _OBS_DropForeignData(table_schema text, table_name text, servername text)
+RETURNS boolean
+AS $$
+BEGIN
+    EXECUTE 'DROP FOREIGN TABLE IF EXISTS "' || table_schema || '".' || table_name;
+    EXECUTE 'DROP SCHEMA IF EXISTS ' || table_schema || ' CASCADE';
+    EXECUTE 'DROP SERVER ' || servername || ' CASCADE;';
+    RETURN true;
+EXCEPTION
+    WHEN others THEN
+        RAISE NOTICE '----- OOPS: SOMETHING FAILED IN SERVER WHEN WIPING FDW DATA %, errm: %)', SQLSTATE, SQLERRM;
+        RETURN false;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
