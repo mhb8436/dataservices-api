@@ -1,11 +1,9 @@
---
--- Temporary server functions which should live in OBS.
---
-CREATE TYPE table_augment_data as (schemaname text, tabname text, servername text, colnames text[], coltypes text[]);
+CREATE TYPE ds_fdw_metadata as (schemaname text, tabname text, servername text);
+CREATE TYPE ds_return_metadata as (colnames text[], coltypes text[]);
 
 
-CREATE OR REPLACE FUNCTION _OBS_AugmentMeasureServer2(username text, useruuid text, input_schema text, dbname text, host text, table_name text, column_name text, tag_name text, normalize text default null, timespan text DEFAULT null, geometry_level text DEFAULT null)
-RETURNS table_augment_data
+CREATE OR REPLACE FUNCTION _OBS_ConnectUserTable(username text, useruuid text, input_schema text, dbname text, host text, table_name text)
+RETURNS ds_fdw_metadata
 AS $$
 DECLARE
   fdw_server text;
@@ -13,8 +11,6 @@ DECLARE
   connection_str json;
   import_foreign_schema_q text;
   epoch_timestamp text;
-  grant_local_table_q text;
-  grant_local_schema_q text;
 BEGIN
 
   SELECT extract(epoch from now() at time zone 'utc')::int INTO epoch_timestamp;
@@ -27,7 +23,7 @@ BEGIN
     || ':{"user":"' || useruuid ||'", "password":""} } }';
 
   -- Configure FDW for the client
-  EXECUTE 'SELECT cartodb._CDB_Setup_FDW(''' || fdw_server || ''', $2::json)' USING fdw_server, connection_str ;
+  EXECUTE 'SELECT cartodb._CDB_Setup_FDW(''' || fdw_server || ''', $2::json)' USING fdw_server, connection_str;
 
   -- Temporary schema created for each user import to avoid table name collisions
   EXECUTE 'CREATE SCHEMA IF NOT EXISTS ' || fdw_import_schema;
@@ -38,12 +34,10 @@ BEGIN
                 || fdw_import_schema || ';';
   EXECUTE import_foreign_schema_q;
 
-  grant_local_table_q = 'GRANT SELECT ON "' || fdw_import_schema || '".' || table_name || ' TO fdw_user;';
-  grant_local_schema_q = 'GRANT USAGE ON SCHEMA "' || fdw_import_schema || '" TO fdw_user;';
-  EXECUTE grant_local_table_q;
-  EXECUTE grant_local_schema_q;
+  EXECUTE 'GRANT SELECT ON "' || fdw_import_schema || '".' || table_name || ' TO fdw_user;';
+  EXECUTE 'GRANT USAGE ON SCHEMA "' || fdw_import_schema || '" TO fdw_user;';
 
-  RETURN (fdw_import_schema::text, table_name::text, fdw_server::text, Array['total_pop']::text[],Array['double precision']::text[]);
+  RETURN (fdw_import_schema::text, table_name::text, fdw_server::text);
 
 EXCEPTION
   WHEN others THEN
@@ -52,18 +46,36 @@ EXCEPTION
     EXECUTE 'DROP FOREIGN TABLE IF EXISTS ' || fdw_import_schema || '.' || table_name;
     EXECUTE 'DROP SCHEMA IF EXISTS ' || fdw_import_schema || ' CASCADE';
     EXECUTE 'DROP SERVER ' || fdw_server || ' CASCADE;';
-    RETURN (null, null, null, null, null);
+    RETURN (null, null, null);
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 
-CREATE OR REPLACE FUNCTION _OBS_AugmentMeasureServer2Results(table_schema text, table_name text, tag_name text, normalize text default null, timespan text DEFAULT null, geometry_level text DEFAULT null)
+
+CREATE OR REPLACE FUNCTION _OBS_GetReturnMetadata(params json)
+RETURNS ds_return_metadata
+AS $$
+DECLARE
+  colnames text[];
+  coltypes text[];
+BEGIN
+  SELECT array_append(colnames, $1::json->>'tag_name') INTO colnames;
+  SELECT array_append(coltypes, 'double precision'::text) INTO coltypes;
+
+  RETURN (colnames::text[], coltypes::text[]);
+END;
+$$ LANGUAGE plpgsql;
+
+
+CREATE OR REPLACE FUNCTION _OBS_GetAugmentedColumns(table_schema text, table_name text, params json)
 RETURNS SETOF record
 AS $$
 DECLARE
   data_query text;
+  tag_name text;
   rec RECORD;
 BEGIN
+    tag_name := params->'tag_name';
 
     data_query := '(WITH _areas AS(SELECT ST_Area(a.the_geom::geography)'
         || '/ (1000 * 1000) as fraction, a.geoid, b.cartodb_id FROM '
@@ -88,7 +100,7 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 
-CREATE OR REPLACE FUNCTION _OBS_DropForeignData(table_schema text, table_name text, servername text)
+CREATE OR REPLACE FUNCTION _OBS_DisconnectUserTable(table_schema text, table_name text, servername text)
 RETURNS boolean
 AS $$
 BEGIN
