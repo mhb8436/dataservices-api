@@ -68,7 +68,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 
-CREATE OR REPLACE FUNCTION _OBS_GetAugmentedColumns(table_schema text, table_name text, params json)
+CREATE OR REPLACE FUNCTION _OBS_GetProcessedData(table_schema text, table_name text, params json)
 RETURNS SETOF record
 AS $$
 DECLARE
