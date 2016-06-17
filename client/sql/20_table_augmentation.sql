@@ -1,7 +1,7 @@
 CREATE TYPE ds_fdw_metadata as (schemaname text, tabname text, servername text);
 CREATE TYPE ds_return_metadata as (colnames text[], coltypes text[]);
 
-CREATE OR REPLACE FUNCTION OBS_AugmentTable(table_name text, output_table_name text, params json)
+CREATE OR REPLACE FUNCTION OBS_ProcessTable(table_name text, output_table_name text, params json)
 RETURNS boolean AS $$
 DECLARE
   username text;
@@ -33,7 +33,7 @@ BEGIN
   SELECT current_database() INTO dbname;
   SELECT _get_db_host() INTO hostname;
 
-  SELECT _OBS_AugmentTable(username::text, useruuid::text, input_schema::text, dbname::text, hostname::text, table_name::text, output_table_name::text, params::json) INTO result;
+  SELECT _OBS_ProcessTable(username::text, useruuid::text, input_schema::text, dbname::text, hostname::text, table_name::text, output_table_name::text, params::json) INTO result;
 
   RETURN true;
 END;
@@ -41,7 +41,7 @@ $$ LANGUAGE 'plpgsql' SECURITY DEFINER;
 
 
 
-CREATE OR REPLACE FUNCTION _OBS_AugmentTable(username text, useruuid text, input_schema text, dbname text, hostname text, table_name text, output_table_name text, params json)
+CREATE OR REPLACE FUNCTION _OBS_ProcessTable(username text, useruuid text, input_schema text, dbname text, hostname text, table_name text, output_table_name text, params json)
 RETURNS boolean AS $$
     try:
         # Obtain metadata for FDW connection
@@ -65,7 +65,7 @@ RETURNS boolean AS $$
         plpy.execute("CREATE TABLE {0} AS "
             "(SELECT results.{1}, user_table.* "
             "FROM {3} as user_table, "
-            "_OBS_GetAugmentedColumns('{2}'::text, '{3}'::text, '{4}'::json) as results({1} numeric, cartodb_id int) "
+            "_OBS_GetProcessedData('{2}'::text, '{3}'::text, '{4}'::json) as results({1} numeric, cartodb_id int) "
             "WHERE results.cartodb_id = user_table.cartodb_id)"
             .format(output_table_name, colnames_array[0] ,schemaname, tabname, params))
 
@@ -97,7 +97,7 @@ RETURNS ds_return_metadata AS $$
     CONNECT _server_conn_str();
 $$ LANGUAGE plproxy;
 
-CREATE OR REPLACE FUNCTION _OBS_GetAugmentedColumns(table_schema text, table_name text, params json)
+CREATE OR REPLACE FUNCTION _OBS_GetProcessedData(table_schema text, table_name text, params json)
 RETURNS SETOF record AS $$
     CONNECT _server_conn_str();
 $$ LANGUAGE plproxy;
