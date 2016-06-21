@@ -8,7 +8,6 @@ DECLARE
   useruuid text;
   orgname text;
   dbname text;
-  hostname text;
   input_schema text;
   result boolean;
 BEGIN
@@ -31,9 +30,8 @@ BEGIN
   END IF;
 
   SELECT current_database() INTO dbname;
-  SELECT _get_db_host() INTO hostname;
 
-  SELECT _OBS_ProcessTable(username::text, useruuid::text, input_schema::text, dbname::text, hostname::text, table_name::text, output_table_name::text, params::json) INTO result;
+  SELECT _OBS_ProcessTable(username::text, useruuid::text, input_schema::text, dbname::text,table_name::text, output_table_name::text, params::json) INTO result;
 
   RETURN true;
 END;
@@ -41,13 +39,13 @@ $$ LANGUAGE 'plpgsql' SECURITY DEFINER;
 
 
 
-CREATE OR REPLACE FUNCTION _OBS_ProcessTable(username text, useruuid text, input_schema text, dbname text, hostname text, table_name text, output_table_name text, params json)
+CREATE OR REPLACE FUNCTION _OBS_ProcessTable(username text, useruuid text, input_schema text, dbname text, table_name text, output_table_name text, params json)
 RETURNS boolean AS $$
     try:
         # Obtain metadata for FDW connection
         ds_fdw_metadata = plpy.execute("SELECT schemaname, tabname, servername "
-            "FROM _OBS_ConnectUserTable('{0}'::text, '{1}'::text, '{2}'::text, '{3}'::text, '{4}'::text, '{5}'::text);"
-            .format(username, useruuid, input_schema, dbname, hostname, table_name))
+            "FROM _OBS_ConnectUserTable('{0}'::text, '{1}'::text, '{2}'::text, '{3}'::text, '{4}'::text);"
+            .format(username, useruuid, input_schema, dbname, table_name))
 
         schemaname = ds_fdw_metadata[0]["schemaname"]
         tabname = ds_fdw_metadata[0]["tabname"]
@@ -87,7 +85,7 @@ RETURNS boolean AS $$
 $$ LANGUAGE plpythonu;
 
 
-CREATE OR REPLACE FUNCTION _OBS_ConnectUserTable(username text, useruuid text, input_schema text, dbname text, hostname text, table_name text)
+CREATE OR REPLACE FUNCTION _OBS_ConnectUserTable(username text, useruuid text, input_schema text, dbname text, table_name text)
 RETURNS ds_fdw_metadata AS $$
     CONNECT _server_conn_str();
 $$ LANGUAGE plproxy;
