@@ -2,7 +2,7 @@ CREATE TYPE ds_fdw_metadata as (schemaname text, tabname text, servername text);
 CREATE TYPE ds_return_metadata as (colnames text[], coltypes text[]);
 
 
-CREATE OR REPLACE FUNCTION _OBS_ConnectUserTable(username text, useruuid text, input_schema text, dbname text, host text, table_name text)
+CREATE OR REPLACE FUNCTION _OBS_ConnectUserTable(username text, useruuid text, input_schema text, dbname text, table_name text)
 RETURNS ds_fdw_metadata
 AS $$
 DECLARE
@@ -11,15 +11,17 @@ DECLARE
   connection_str json;
   import_foreign_schema_q text;
   epoch_timestamp text;
+  user_host text;
 BEGIN
 
   SELECT extract(epoch from now() at time zone 'utc')::int INTO epoch_timestamp;
   fdw_server := 'fdw_server_' || username || '_' || epoch_timestamp;
   fdw_import_schema:= fdw_server;
+  SELECT split_part(inet_client_addr()::text, '/', 1) INTO user_host;
 
   -- Build connection string to import table from client
   connection_str := '{"server":{"extensions":"postgis", "dbname":"'
-    || dbname ||'", "host":"' || host ||'", "port":"5432"}, "users":{"public"'
+    || dbname ||'", "host":"' || user_host ||'", "port":"5432"}, "users":{"public"'
     || ':{"user":"' || useruuid ||'", "password":""} } }';
 
   -- Configure FDW for the client
