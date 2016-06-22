@@ -42,6 +42,7 @@ $$ LANGUAGE 'plpgsql' SECURITY DEFINER;
 CREATE OR REPLACE FUNCTION _OBS_ProcessTable(username text, useruuid text, input_schema text, dbname text, table_name text, output_table_name text, params json)
 RETURNS boolean AS $$
     try:
+        tabname = None
         # Obtain metadata for FDW connection
         ds_fdw_metadata = plpy.execute("SELECT schemaname, tabname, servername "
             "FROM _OBS_ConnectUserTable('{0}'::text, '{1}'::text, '{2}'::text, '{3}'::text, '{4}'::text);"
