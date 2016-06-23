@@ -1,7 +1,7 @@
 CREATE TYPE ds_fdw_metadata as (schemaname text, tabname text, servername text);
 CREATE TYPE ds_return_metadata as (colnames text[], coltypes text[]);
 
-CREATE OR REPLACE FUNCTION OBS_ProcessTable(table_name text, output_table_name text, params json)
+CREATE OR REPLACE FUNCTION cdb_dataservices_client.OBS_ProcessTable(table_name text, output_table_name text, params json)
 RETURNS boolean AS $$
 DECLARE
   username text;
@@ -31,7 +31,7 @@ BEGIN
 
   SELECT current_database() INTO dbname;
 
-  SELECT _OBS_ProcessTable(username::text, useruuid::text, input_schema::text, dbname::text,table_name::text, output_table_name::text, params::json) INTO result;
+  SELECT cdb_dataservices_client._OBS_ProcessTable(username::text, useruuid::text, input_schema::text, dbname::text,table_name::text, output_table_name::text, params::json) INTO result;
 
   RETURN true;
 END;
@@ -39,13 +39,13 @@ $$ LANGUAGE 'plpgsql' SECURITY DEFINER;
 
 
 
-CREATE OR REPLACE FUNCTION _OBS_ProcessTable(username text, useruuid text, input_schema text, dbname text, table_name text, output_table_name text, params json)
+CREATE OR REPLACE FUNCTION cdb_dataservices_client._OBS_ProcessTable(username text, useruuid text, input_schema text, dbname text, table_name text, output_table_name text, params json)
 RETURNS boolean AS $$
     try:
         tabname = None
         # Obtain metadata for FDW connection
         ds_fdw_metadata = plpy.execute("SELECT schemaname, tabname, servername "
-            "FROM _OBS_ConnectUserTable('{0}'::text, '{1}'::text, '{2}'::text, '{3}'::text, '{4}'::text);"
+            "FROM cdb_dataservices_client._OBS_ConnectUserTable('{0}'::text, '{1}'::text, '{2}'::text, '{3}'::text, '{4}'::text);"
             .format(username, useruuid, input_schema, dbname, table_name))
 
         schemaname = ds_fdw_metadata[0]["schemaname"]
@@ -54,7 +54,7 @@ RETURNS boolean AS $$
 
         # Obtain return types for augmentation procedure
         ds_return_metadata = plpy.execute("SELECT colnames, coltypes "
-            "FROM _OBS_GetReturnMetadata('{0}'::json);"
+            "FROM cdb_dataservices_client._OBS_GetReturnMetadata('{0}'::json);"
             .format(params))
 
         colnames_array = ds_return_metadata[0]["colnames"]
@@ -64,7 +64,7 @@ RETURNS boolean AS $$
         plpy.execute("CREATE TABLE {0} AS "
             "(SELECT results.{1}, user_table.* "
             "FROM {3} as user_table, "
-            "_OBS_GetProcessedData('{2}'::text, '{3}'::text, '{4}'::json) as results({1} numeric, cartodb_id int) "
+            "cdb_dataservices_client._OBS_GetProcessedData('{2}'::text, '{3}'::text, '{4}'::json) as results({1} numeric, cartodb_id int) "
             "WHERE results.cartodb_id = user_table.cartodb_id)"
             .format(output_table_name, colnames_array[0] ,schemaname, tabname, params))
 
@@ -72,7 +72,7 @@ RETURNS boolean AS $$
             .format(output_table_name, useruuid))
 
         # Wipe user FDW data from the server
-        wiped = plpy.execute("SELECT _OBS_DisconnectUserTable('{0}'::text, '{1}'::text, '{2}'::text)"
+        wiped = plpy.execute("SELECT cdb_dataservices_client._OBS_DisconnectUserTable('{0}'::text, '{1}'::text, '{2}'::text)"
             .format(schemaname, tabname, servername))
 
         return True
@@ -80,28 +80,32 @@ RETURNS boolean AS $$
         plpy.warning('Error trying to augment table {0}'.format(e))
         # Wipe user FDW data from the server in case of failure
         if tabname:
-            wiped = plpy.execute("SELECT _OBS_DisconnectUserTable('{0}'::text, '{1}'::text, '{2}'::text)"
+            wiped = plpy.execute("SELECT cdb_dataservices_client._OBS_DisconnectUserTable('{0}'::text, '{1}'::text, '{2}'::text)"
                 .format(schemaname, tabname, servername))
         return False
 $$ LANGUAGE plpythonu;
 
 
-CREATE OR REPLACE FUNCTION _OBS_ConnectUserTable(username text, useruuid text, input_schema text, dbname text, table_name text)
+CREATE OR REPLACE FUNCTION cdb_dataservices_client._OBS_ConnectUserTable(username text, useruuid text, input_schema text, dbname text, table_name text)
 RETURNS ds_fdw_metadata AS $$
     CONNECT _server_conn_str();
+    SELECT cdb_dataservices_server.OBS_ConnectUserTable(username text, useruuid text, input_schema text, dbname text, table_name text);
 $$ LANGUAGE plproxy;
 
-CREATE OR REPLACE FUNCTION _OBS_GetReturnMetadata(params json)
+CREATE OR REPLACE FUNCTION cdb_dataservices_client._OBS_GetReturnMetadata(params json)
 RETURNS ds_return_metadata AS $$
     CONNECT _server_conn_str();
+    SELECT cdb_dataservices_server.OBS_GetReturnMetadata(params json);
 $$ LANGUAGE plproxy;
 
-CREATE OR REPLACE FUNCTION _OBS_GetProcessedData(table_schema text, table_name text, params json)
+CREATE OR REPLACE FUNCTION cdb_dataservices_client._OBS_GetProcessedData(table_schema text, table_name text, params json)
 RETURNS SETOF record AS $$
     CONNECT _server_conn_str();
+    SELECT cdb_dataservices_server.OBS_GetProcessedData(table_schema text, table_name text, params json);
 $$ LANGUAGE plproxy;
 
-CREATE OR REPLACE FUNCTION _OBS_DisconnectUserTable(table_schema text, table_name text, server_name text)
+CREATE OR REPLACE FUNCTION cdb_dataservices_client._OBS_DisconnectUserTable(table_schema text, table_name text, server_name text)
 RETURNS boolean AS $$
     CONNECT _server_conn_str();
+    SELECT cdb_dataservices_server.OBS_DisconnectUserTable(table_schema text, table_name text, server_name text);
 $$ LANGUAGE plproxy;
