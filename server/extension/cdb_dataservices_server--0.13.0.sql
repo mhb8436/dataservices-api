@@ -1166,7 +1166,11 @@ RETURNS boolean AS $$
     CONNECT cdb_dataservices_server._obs_server_conn_str(username, orgname);
     TARGET cdb_observatory._OBS_DisconnectUserTable;
 $$ LANGUAGE plproxy;
-CREATE OR REPLACE FUNCTION cdb_dataservices_server._get_geocoder_config(username text, orgname text)
+CREATE OR REPLACE FUNCTION cdb_dataservices_server.obs_dumpversion(username text, orgname text)
+RETURNS text AS $$
+  CONNECT cdb_dataservices_server._obs_server_conn_str(username, orgname);
+  SELECT cdb_observatory.obs_dumpversion();
+$$ LANGUAGE plproxy;CREATE OR REPLACE FUNCTION cdb_dataservices_server._get_geocoder_config(username text, orgname text)
 RETURNS boolean AS $$
   cache_key = "user_geocoder_config_{0}".format(username)
   if cache_key in GD:
